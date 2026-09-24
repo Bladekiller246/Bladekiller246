@@ -1,32 +1,33 @@
 <div align="center">
 
-<img src="assets/hero.svg" width="100%" alt="A Hyprland-style desktop. A fastfetch terminal introduces Mann Kuvadiya: B.Tech IT, class of 2028, at KJSCE, Somaiya Vidyavihar University, with Honours in Cyber Security, based in Mumbai. The .plan reads: building Creep, an LLM agent that reads HAR and OpenAPI, infers the auth model and tries to break it; honeypotting medical-device services on a Raspberry Pi and classifying attackers with ML; researching which attention axis noise, blur and rain need. Beside it, nvim edits mann.py and a btop-style monitor plots training loss and PSNR.">
+<img src="assets/hero.svg" width="100%" alt="A neon city at night in the rain. Mann Kuvadiya: machine learning × security, Mumbai. Kanji and katakana neon signs read 'machine learning' and 'security'.">
 
-<a href="https://linkedin.com/in/mann-kuvadiya"><img src="assets/btn-linkedin.svg" height="40" alt="LinkedIn"></a>&nbsp;
-<a href="https://github.com/Bladekiller246/Mann-Kuvadiya-Portfolio"><img src="assets/btn-portfolio.svg" height="40" alt="Portfolio"></a>
-<!-- <a href="mailto:YOUR_EMAIL"><img src="assets/btn-email.svg" height="40" alt="Email"></a> -->
-
-**ML × security** out of Mumbai. I build LLM agents that test access control,<br>
-honeypots that learn from whoever attacks them, and transformers that un-break images.
+<a href="https://linkedin.com/in/mann-kuvadiya"><img src="assets/btn-linkedin.svg" height="44" alt="LinkedIn"></a>&nbsp;&nbsp;
+<a href="https://github.com/Bladekiller246/Mann-Kuvadiya-Portfolio"><img src="assets/btn-portfolio.svg" height="44" alt="Portfolio"></a>
+<!-- <a href="mailto:YOUR_EMAIL"><img src="assets/btn-email.svg" height="44" alt="Email"></a> -->
 
 </div>
 
 <br>
 
-<img src="assets/head-projects.svg" width="100%" alt="Projects">
+<img src="assets/dossier.svg" width="100%" alt="Dossier. Subject: Mann Kuvadiya, alias Bladerunner2077. B.Tech IT with Honours in Cyber Security, class of 2028, KJSCE, Somaiya Vidyavihar, Mumbai. Function: machine learning × offensive security. Joined GitHub 2021. Status: active, building Creep.">
 
-<p align="center">
-  <img src="assets/card-creep.svg" width="49%" alt="Creep, building: an LLM agent that reads HAR traffic and OpenAPI specs, infers the app's intended authorisation model, then plans multi-step requests to break it. Python, FastAPI, LLM APIs, scikit-learn. Private.">
-  <img src="assets/card-honeypot.svg" width="49%" alt="Medical-device honeypot, paper in progress: a Raspberry Pi posing as medical-device network services, with an ML stage that classifies and clusters attacker behaviour. Python, scikit-learn, Raspberry Pi, Linux. Private.">
-  <a href="https://github.com/Bladekiller246/DATNet"><img src="assets/card-datnet.svg" width="49%" alt="DATNet, research: a dual-axis transformer for image restoration, pairing channel and shifted-window attention with a learned gate. PyTorch, transformers, OpenCV. Opens the repo."></a>
-  <a href="https://github.com/Bladekiller246/SemiCon-ML"><img src="assets/card-semicon.svg" width="49%" alt="SemiCon-ML, hackathon: a NAFNet-derived model for KLA problem statement 01 that jointly denoises and 2x super-resolves 128 by 128 images to 256 by 256. PyTorch. Opens the repo."></a>
-  <img src="assets/card-privacylayer.svg" width="49%" alt="PrivacyLayer, demo day: self-sovereign identity with W3C DIDs, verifiable credentials and zero-knowledge selective disclosure; presented at KLEOS 4.0. Solidity, circom, snarkjs, React Native. Private.">
-  <a href="https://github.com/Bladekiller246/dvwa-file-upload-Vulnerability-"><img src="assets/card-dvwa.svg" width="49%" alt="Upload to RCE, writeup: a VAPT proof of concept showing an unrestricted file upload in DVWA escalating to remote code execution. PHP. Opens the repo."></a>
-</p>
+<br><br>
 
-<img src="assets/head-stack.svg" width="100%" alt="Stack">
+<img src="assets/head-cases.svg" width="100%" alt="Case files">
 
-<img src="assets/stack.svg" width="100%" alt="Stack. ML: PyTorch, scikit-learn, NumPy, pandas, OpenCV, Matplotlib. LLM: LLM APIs, agent flows, structured output, prompt-injection handling. Security: VAPT, OWASP Top 10, OWASP LLM Top 10, honeypots, DIDs and verifiable credentials with ZK. Backend: FastAPI, REST, SQL, SQL Server, OpenAPI and HAR parsing. Languages: Python, C, C++, JavaScript, Solidity, Bash. Tools: Git, Linux, Raspberry Pi, GitHub.">
+<img src="assets/case-creep.svg" width="100%" alt="Case 01, Creep, active: an LLM agent that reads HAR and OpenAPI, infers the auth model, then breaks it. Python, FastAPI, LLM APIs. Private.">
+<img src="assets/case-honeypot.svg" width="100%" alt="Case 02, medical-device honeypot, research: a Raspberry Pi posing as medical devices, with ML clustering whoever attacks it. Python, scikit-learn. Private.">
+<a href="https://github.com/Bladekiller246/DATNet"><img src="assets/case-datnet.svg" width="100%" alt="Case 03, DATNet, research: a dual-axis transformer with channel and spatial attention for image restoration. PyTorch. Opens the repo."></a>
+<a href="https://github.com/Bladekiller246/SemiCon-ML"><img src="assets/case-semicon.svg" width="100%" alt="Case 04, SemiCon-ML, shipped: a NAFNet variant for KLA's hackathon doing joint denoising and 2x super-resolution. PyTorch. Opens the repo."></a>
+<img src="assets/case-privacylayer.svg" width="100%" alt="Case 05, PrivacyLayer, demoed: self-sovereign identity with zero-knowledge selective disclosure. Solidity, circom, React Native. Private.">
+<a href="https://github.com/Bladekiller246/dvwa-file-upload-Vulnerability-"><img src="assets/case-dvwa.svg" width="100%" alt="Case 06, Upload to RCE, writeup: a VAPT proof of concept escalating an unrestricted file upload to remote code execution. PHP. Opens the repo."></a>
+
+<br><br>
+
+<img src="assets/loadout.svg" width="100%" alt="Loadout. Build: Python, PyTorch, scikit-learn, OpenCV, FastAPI, SQL, Solidity. Break: VAPT, OWASP Top 10, OWASP LLM Top 10, access control, honeypots. Run: Linux, Git, Raspberry Pi, C and C++, Bash.">
+
+<br><br>
 
 <img src="assets/head-activity.svg" width="100%" alt="Activity">
 
@@ -38,4 +39,4 @@ honeypots that learn from whoever attacks them, and transformers that un-break i
 
 <br><br>
 
-<img src="assets/footer.svg" width="100%" alt="An audio visualiser signing off: thanks for stopping by">
+<img src="assets/footer.svg" width="100%" alt="End of transmission">
