@@ -1,707 +1,565 @@
 #!/usr/bin/env python3
 """
-Renders every SVG in ../assets: the cyberpunk / Blade Runner art on this profile.
+Renders every SVG in ../assets: one amber-phosphor CRT terminal session.
 
-Text is converted to vector outlines, so the art renders the same everywhere
-(GitHub serves repo SVGs under a CSP that blocks embedded fonts anyway).
-Edit the copy in this file, then rebuild:
+Text is outlined into vector paths, because GitHub serves repo SVGs under a CSP
+that blocks embedded fonts. Edit the copy below, then rebuild:
 
     pip install fonttools
-    python build/render.py --mono "path/to/JetBrainsMono"
+    python build/render.py
 
---mono is the folder holding JetBrainsMonoNLNerdFontMono-{Regular,Bold}.ttf
-(nerdfonts.com -> JetBrainsMono). Chakra Petch and Noto Sans JP (both SIL OFL)
-are fetched on first run from a pinned google/fonts commit into build/.fonts/
-and checked against their SHA-256 before use.
+VT323 (SIL OFL) is fetched once from a pinned google/fonts commit into
+build/.fonts/ and checked against its SHA-256 before use.
 """
-import argparse
 import hashlib
-import math
 import random
 import urllib.request
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from fontTools import subset
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.ttLib import TTFont
-from fontTools.varLib.instancer import instantiateVariableFont
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "assets"
 CACHE = Path(__file__).resolve().parent / ".fonts"
+FONT = ("VT323-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/23e54b51ddffbc7713c583748e3bd86f62b1fa4a/ofl/vt323/VT323-Regular.ttf",
+        "cf4de751ada78ceac033dbe16a687742939995b77bc2a052ae17a4957958594d")
 
-GF = "https://raw.githubusercontent.com/google/fonts/23e54b51ddffbc7713c583748e3bd86f62b1fa4a/ofl/"
-REMOTE = {
-    "ChakraPetch-Bold.ttf": ("chakrapetch/ChakraPetch-Bold.ttf",
-                             "65fbf76d95651697275e19db4d717c0e95a789ddd3476478b05292104db278a0"),
-    "ChakraPetch-SemiBold.ttf": ("chakrapetch/ChakraPetch-SemiBold.ttf",
-                                 "45264de3204ddbd5fb3e14a2402acd5c630d16650ae5fc221d2c52da46a6734b"),
-    "ChakraPetch-Medium.ttf": ("chakrapetch/ChakraPetch-Medium.ttf",
-                               "d480f4f97405fac3600652e2e14fd0b14339031c0af4da11582994878f04d919"),
-    "NotoSansJP[wght].ttf": ("notosansjp/NotoSansJP%5Bwght%5D.ttf",
-                             "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f"),
-}
-
-# night city: near-black blues, neon cyan and magenta, 2077 yellow, 2049 amber
-N = dict(
-    void="#05050a", panel="#0a0a12", raised="#10101c", line="#1d1e30",
-    dim="#5b5e7a", mid="#9598b3", text="#e8e8f2", white="#f6f6fc",
-    cyan="#00e5ff", mag="#ff2a6d", yel="#fcee0a", amber="#ff9e3d", violet="#b8a2ff",
+# P3 amber phosphor on warm black
+C = dict(
+    screen="#130c05", edge="#3a2a12", faint="#2b1e0a", bar="#2a1d09",
+    dim="#a87724", mid="#d49a35", amb="#ffb000", hi="#ffd88a", white="#fff4dc",
 )
 
-JP_TEXT = "機械学習セキュリティブレードランナー・"
+HOST = "bladekiller246"
+WINDOWS = ["boot", "finger", "nmap", "msf", "log"]
 
-BASE_CSS = """
+
+# ── copy ────────────────────────────────────────────────────────────────────
+
+BIOS = [  # label, value, status
+    ("mount /dev/kjsce", "B.Tech IT · Honours in Cyber Security · class of 2028", "OK"),
+    ("load modules", "machine-learning  offensive-security  honeypots  zk-identity", "OK"),
+    ("link", "Mumbai, IN · 19.07°N 72.87°E", "UP"),
+]
+TAGLINE = "> machine learning x offensive security"
+SUBLINE = "  agents that hunt auth bugs · honeypots that learn from attackers"
+
+FINGER = [  # (left label, value), (right label, value)
+    (("Login:", "mann"), ("Name:", "Mann Kuvadiya")),
+    (("Directory:", "/home/mann"), ("Shell:", "/bin/bash")),
+    (("Office:", "KJSCE, Somaiya Vidyavihar"), ("Location:", "Mumbai, IN")),
+]
+PROJECT = "Creep — an LLM agent that reads HAR + OpenAPI, infers the auth model, then breaks it."
+PLAN = [
+    "B.Tech IT, Honours in Cyber Security · K. J. Somaiya College of Engineering, Mumbai · '28",
+    "I work where machine learning meets offensive security: agents that hunt auth bugs,",
+    "honeypots that teach models how attackers behave, and vision models on the side.",
+]
+
+PORTS = [  # port, service, version (= the skills)
+    ("22/tcp", "ssh", "Linux · Bash · Git · C/C++"),
+    ("80/tcp", "http", "FastAPI · HTML/CSS/JS · React Native"),
+    ("1883/tcp", "mqtt", "Raspberry Pi · IoT sensors · honeypots"),
+    ("3306/tcp", "mysql", "SQL"),
+    ("4444/tcp", "msf-handler", "Metasploit · Netcat · Nmap · Wireshark"),
+    ("8080/tcp", "http-proxy", "Burp Suite · OWASP ZAP"),
+    ("8545/tcp", "eth-rpc", "Solidity · circom · snarkjs"),
+    ("8888/tcp", "jupyter", "Python · PyTorch · scikit-learn · OpenCV"),
+    ("31337/tcp", "elite", "VAPT · OWASP Top 10 · OWASP LLM Top 10 · access control"),
+]
+
+MODULES = [  # file, module path, status, description, stack, public repo?
+    ("mod-creep.svg", "auxiliary/scanner/http/creep", "ACTIVE",
+     "LLM agent: reads HAR + OpenAPI, infers the auth model, then breaks it", "python · fastapi · llm apis", False),
+    ("mod-honeypot.svg", "auxiliary/server/capture/medical_honeypot", "RESEARCH",
+     "Raspberry Pi posing as a medical device; ML clusters whoever attacks it", "python · scikit-learn · raspberry pi", False),
+    ("mod-dvwa.svg", "exploit/unix/webapp/dvwa_upload_rce", "WRITEUP",
+     "VAPT proof of concept: unrestricted file upload escalated to RCE", "php", True),
+    ("mod-privacylayer.svg", "auxiliary/admin/identity/privacylayer", "WIP",
+     "Self-sovereign identity with zero-knowledge selective disclosure", "solidity · circom · react native", False),
+    ("mod-datnet.svg", "post/vision/datnet", "RESEARCH",
+     "Dual-axis transformer with channel + spatial attention for image restoration", "pytorch", True),
+    ("mod-semicon.svg", "post/vision/semicon_ml", "SHIPPED",
+     "NAFNet variant for KLA's hackathon: joint denoising + 2x super-resolution", "pytorch", True),
+]
+
+KEYS = [("key-linkedin.svg", "F1", "LINKEDIN"), ("key-portfolio.svg", "F2", "PORTFOLIO"), ("key-email.svg", "F3", "EMAIL")]
+
+# 5×7 dot-matrix glyphs for the boot screen name
+DOTS = {
+    "M": "1...1 11.11 1.1.1 1.1.1 1...1 1...1 1...1",
+    "A": ".111. 1...1 1...1 11111 1...1 1...1 1...1",
+    "N": "1...1 11..1 1.1.1 1..11 1...1 1...1 1...1",
+    "K": "1...1 1..1. 1.1.. 11... 1.1.. 1..1. 1...1",
+    "U": "1...1 1...1 1...1 1...1 1...1 1...1 .111.",
+    "V": "1...1 1...1 1...1 1...1 1...1 .1.1. ..1..",
+    "D": "1111. 1...1 1...1 1...1 1...1 1...1 1111.",
+    "I": ".111. ..1.. ..1.. ..1.. ..1.. ..1.. .111.",
+    "Y": "1...1 1...1 .1.1. ..1.. ..1.. ..1.. ..1..",
+}
+
+CSS = """
+@keyframes on{from{opacity:0}}
 @keyframes blink{50%{opacity:0}}
-@keyframes twinkle{50%{opacity:.15}}
-@keyframes flicker{0%,40%,44%,47%,77%,82%,100%{opacity:1}41%{opacity:.2}43%{opacity:.7}45%{opacity:.3}79%{opacity:.1}80%{opacity:.8}}
-.blink{animation:blink 1.1s steps(1) infinite}
-.twinkle{animation:twinkle 5s ease-in-out infinite}
-.flicker{animation:flicker 5.5s linear infinite}
+@keyframes pulse{50%{opacity:.45}}
+@keyframes px{0%{opacity:0}30%{opacity:1;fill:#fff4dc}100%{opacity:1}}
+@keyframes pwr{0%{opacity:.9;transform:scaleY(.004)}22%{opacity:.75;transform:scaleY(1)}100%{opacity:0;transform:scaleY(1)}}
+.k{animation:on .01s steps(1) backwards}
+.ln{animation:on .18s ease-out backwards}
+.px{animation:px .6s ease-out backwards}
+.cur{animation:on .01s steps(1) backwards,blink 1.06s steps(1) infinite}
+.pulse{animation:pulse 2.6s ease-in-out infinite}
+.pwr{opacity:0;transform-box:fill-box;transform-origin:50% 50%;animation:pwr .7s ease-out both}
+.roll{animation:roll 7s linear infinite}
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 """
 
 
-# ── fonts & outlined text ───────────────────────────────────────────────────
+# ── font & outlined text ────────────────────────────────────────────────────
 
-def fetch(name):
-    """A pinned google/fonts file, verified by SHA-256 before it is trusted."""
-    rel, want = REMOTE[name]
+def load_font():
+    name, url, want = FONT
     path = CACHE / name
     if path.exists():
         data = path.read_bytes()
     else:
         print(f"  fetching {name}")
-        with urllib.request.urlopen(GF + rel, timeout=120) as r:
+        with urllib.request.urlopen(url, timeout=120) as r:
             data = r.read()
     got = hashlib.sha256(data).hexdigest()
     if got != want:
         raise SystemExit(f"{name}: sha256 {got} does not match the pinned {want}; refusing to use it")
-    if not path.exists():
-        CACHE.mkdir(exist_ok=True)
-        path.write_bytes(data)
-    return path
+    CACHE.mkdir(exist_ok=True)
+    path.write_bytes(data)
+    return Font(TTFont(path))
 
 
 class Font:
     def __init__(self, font):
-        if font["head"].unitsPerEm != 1000:
-            raise SystemExit("every face is assumed to be 1000 units per em")
         self.cmap = font.getBestCmap()
         self.glyphs = font.getGlyphSet()
         self.hmtx = font["hmtx"]
-        self.cache = {}
 
-    @classmethod
-    def load(cls, path):
-        return cls(TTFont(path))
-
-    @classmethod
-    def instance(cls, path, text, **axes):
-        """Subset a variable font to `text` first, then pin its axes: much
-        faster than instancing all of Noto Sans JP."""
-        font = TTFont(path)
-        sub = subset.Subsetter()
-        sub.populate(text=text)
-        sub.subset(font)
-        return cls(instantiateVariableFont(font, axes))
-
-    def glyph(self, ch):
-        name = self.cmap.get(ord(ch))
-        if name is None:
+    def name(self, ch):
+        g = self.cmap.get(ord(ch))
+        if g is None:
             raise SystemExit(f"glyph missing from font: {ch!r} U+{ord(ch):04X}")
-        return name
+        return g
 
     def adv(self, ch):
-        return self.hmtx[self.glyph(ch)][0]
+        return self.hmtx[self.name(ch)][0]
 
     def path(self, ch):
-        if ch not in self.cache:
-            pen = SVGPathPen(self.glyphs, ntos=lambda v: f"{v:.0f}" if v == int(v) else f"{v:.1f}")
-            self.glyphs[self.glyph(ch)].draw(pen)
-            self.cache[ch] = pen.getCommands()
-        return self.cache[ch]
+        pen = SVGPathPen(self.glyphs)
+        self.glyphs[self.name(ch)].draw(pen)
+        return pen.getCommands()
+
+
+def at(t):
+    return f' style="animation-delay:{t:.2f}s"'
 
 
 class Svg:
-    def __init__(self, fonts, w, h, label):
-        self.fonts, self.w, self.h, self.label = fonts, w, h, label
-        self.defs, self.body, self.css = [], [], [BASE_CSS]
-        self.glyph_ids = set()
-        self.n = 0
+    def __init__(self, font, w, h, label):
+        self.font, self.w, self.h, self.label = font, w, h, label
+        self.defs, self.glyphs, self.body, self.n = [], {}, [], 0
 
-    def id(self, prefix):
+    def uid(self, prefix):
         self.n += 1
         return f"{prefix}{self.n}"
 
-    def add(self, *parts):
-        self.body.extend(parts)
-
-    def gid(self, face, ch):
-        gid = f"g{face}-{ord(ch):x}"
-        if gid not in self.glyph_ids:
-            self.defs.append(f'<path id="{gid}" d="{self.fonts[face].path(ch)}"/>')
-            self.glyph_ids.add(gid)
+    def glyph(self, ch):
+        gid = f"g{ord(ch):x}"
+        if gid not in self.glyphs:
+            self.glyphs[gid] = f'<path id="{gid}" d="{self.font.path(ch)}"/>'
         return gid
 
-    def _runs(self, runs, fill, face):
-        if isinstance(runs, str):
-            runs = [(runs, fill)]
-        return [(r[0], r[1] or fill, r[2] if len(r) > 2 else face) for r in runs]
+    def width(self, text, size):
+        return sum(self.font.adv(c) for c in text) * size / 1000
 
-    def measure(self, runs, size=13, face="m", track=0.0):
-        runs = self._runs(runs, None, face)
-        n = sum(len(t) for t, _, _ in runs)
-        return sum(self.fonts[f].adv(ch) for t, _, f in runs for ch in t) * size / 1000 + track * (n - 1)
-
-    def text(self, x, y, runs, size=13, face="m", fill=N["text"], anchor="start", track=0.0, attrs=""):
-        """Draw outlined text; `runs` is a str or [(str, fill[, face])].
-        Returns the drawn width in px."""
-        runs = self._runs(runs, fill, face)
-        width = self.measure(runs, size, face, track)
-        if anchor == "middle":
-            x -= width / 2
-        elif anchor == "end":
-            x -= width
-        k = size / 1000
-        out = [f'<g transform="translate({x:.1f} {y:.1f}) scale({k:g} {-k:g})"{attrs}>']
-        pos = 0.0
-        for s, f, fc in runs:
-            uses = []
-            for ch in s:
-                if not ch.isspace():
-                    uses.append(f'<use href="#{self.gid(fc, ch)}" x="{pos:.0f}"/>')
-                pos += self.fonts[fc].adv(ch) + track * 1000 / size
-            if uses:
-                out.append(f'<g fill="{f}">{"".join(uses)}</g>')
-        out.append("</g>")
-        self.add("".join(out))
-        return width
-
-    def vtext(self, cx, y, text, size, face, fill, step=1.08, attrs=""):
-        """Vertical signage: one glyph per line, centred on cx."""
-        self.add(f"<g{attrs}>")
+    def text(self, x, y, text, size=21, fill="amb", anchor="start", t=None, cps=60, attrs=""):
+        """Outlined text -> (svg, end x). t= types it in from t seconds at cps chars/s."""
+        w = self.width(text, size)
+        x -= {"start": 0, "middle": w / 2, "end": w}[anchor]
+        uses, pos = [], 0
         for i, ch in enumerate(text):
-            self.text(cx, y + i * size * step, ch, size=size, face=face, fill=fill, anchor="middle")
-        self.add("</g>")
+            if ch != " ":
+                anim = f' class="k"{at(t + i / cps)}' if t is not None else ""
+                uses.append(f'<use href="#{self.glyph(ch)}" x="{pos}"{anim}/>')
+            pos += self.font.adv(ch)
+        k = size / 1000
+        return (f'<g transform="translate({x:.1f} {y:.1f}) scale({k:.4f} {-k:.4f})" '
+                f'fill="{C.get(fill, fill)}"{attrs}>{"".join(uses)}</g>'), x + w
+
+    def runs(self, x, y, parts, size=21, t=None, cps=60):
+        """Several colored runs on one line; typing carries on across runs."""
+        out = []
+        for txt, fill in parts:
+            g, x = self.text(x, y, txt, size, fill, t=t, cps=cps)
+            out.append(g)
+            if t is not None:
+                t += len(txt) / cps
+        return "".join(out), x, t
 
     def save(self, name):
-        svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{self.w}" height="{self.h}" '
-            f'viewBox="0 0 {self.w} {self.h}" role="img" aria-label="{escape(self.label)}">'
-            f"<title>{escape(self.label)}</title>"
-            f'<style>{"".join(self.css).strip()}</style>'
-            f'<defs>{"".join(self.defs)}</defs>'
-            f'{"".join(self.body)}</svg>'
-        )
-        OUT.mkdir(exist_ok=True)
+        label = escape(self.label, {'"': "&quot;"})
+        css = CSS + f"@keyframes roll{{to{{transform:translateY({self.h + 140}px)}}}}"
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {self.w} {self.h}" '
+               f'width="{self.w}" height="{self.h}" role="img" aria-label="{label}">'
+               f"<title>{label}</title><style>{css}</style>"
+               f'<defs>{"".join(self.defs)}{"".join(self.glyphs.values())}</defs>'
+               f'{"".join(self.body)}</svg>')
         (OUT / name).write_text(svg, encoding="utf-8")
-        print(f"  {name:20s} {len(svg) / 1024:6.1f} KB")
+        print(f"  {name:24s} {len(svg) / 1024:6.1f} KB")
 
 
 # ── shared pieces ───────────────────────────────────────────────────────────
 
-def chamfer(x, y, w, h, tl=0, tr=0, br=0, bl=0):
-    """A rectangle with cut corners — the HUD panel shape."""
-    return (f"M{x + tl} {y}H{x + w - tr}L{x + w} {y + tr}V{y + h - br}"
-            f"L{x + w - br} {y + h}H{x + bl}L{x} {y + h - bl}V{y + tl}Z")
+FX = """<filter id="glow" x="-5%" y="-10%" width="110%" height="120%" color-interpolation-filters="sRGB">
+<feGaussianBlur in="SourceGraphic" stdDeviation="1" result="a"/>
+<feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
+<feColorMatrix in="b" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 .6 0" result="c"/>
+<feMerge><feMergeNode in="c"/><feMergeNode in="a"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="1.5" fill="#000" fill-opacity=".3"/></pattern>
+<radialGradient id="vig" r="75%"><stop offset=".6" stop-opacity="0"/><stop offset="1" stop-opacity=".5"/></radialGradient>
+<radialGradient id="tube" cy="45%" r="75%"><stop offset="0" stop-color="#1e1407"/><stop offset="1" stop-color="#0d0803"/></radialGradient>
+<linearGradient id="rollg" x2="0" y2="1"><stop offset="0" stop-color="#ffb000" stop-opacity="0"/>
+<stop offset=".5" stop-color="#ffb000" stop-opacity=".05"/><stop offset="1" stop-color="#ffb000" stop-opacity="0"/></linearGradient>"""
 
 
-def panel(s, x, y, w, h, cut=18, accent=N["cyan"], accent2=N["mag"]):
-    """Dark chamfered panel with neon ticks on the two cut corners."""
-    s.add(f'<path d="{chamfer(x, y, w, h, tl=cut, br=cut)}" fill="{N["panel"]}" stroke="{N["line"]}" stroke-width="1.2"/>')
-    s.add(f'<path d="M{x} {y + cut + 22}V{y + cut}L{x + cut} {y}H{x + cut + 60}" fill="none" stroke="{accent}" stroke-width="2"/>')
-    s.add(f'<path d="M{x + w} {y + h - cut - 22}V{y + h - cut}L{x + w - cut} {y + h}H{x + w - cut - 60}" '
-          f'fill="none" stroke="{accent2}" stroke-width="2"/>')
+def screen(s, x, y, w, h, r, content, over=""):
+    """Phosphor screen: tube, glowing content, scanlines, vignette, refresh bar."""
+    cid = s.uid("clip")
+    s.defs.append(f'<clipPath id="{cid}"><rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}"/></clipPath>')
+    return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" fill="url(#tube)"/>'
+            f'<g clip-path="url(#{cid})"><g filter="url(#glow)">{content}</g>{over}'
+            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="url(#scan)"/>'
+            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="url(#vig)"/>'
+            f'<rect class="roll" x="{x}" y="{y - 140}" width="{w}" height="140" fill="url(#rollg)"/></g>')
 
 
-def section_label(s, x, y, num, title, size=13):
-    w = s.text(x, y, f"// {num}", size=size, face="d", fill=N["mag"], track=1.5)
-    return w + s.text(x + w + 12, y, title, size=size, face="ds", fill=N["text"], track=5) + 12
+def panel(s, content, active=None):
+    """A full-bleed terminal panel, with a tmux status bar when active is set."""
+    s.defs.append(FX)
+    if active is not None:
+        content += tmux(s, 1, s.h - 31, s.w - 2, active)
+    s.body.append(screen(s, 1, 1, s.w - 2, s.h - 2, 16, content))
+    s.body.append(f'<rect x="1" y="1" width="{s.w - 2}" height="{s.h - 2}" rx="16" fill="none" '
+                  f'stroke="{C["edge"]}" stroke-width="1.5"/>')
 
 
-def glow_filter(s, fid, *devs):
-    nodes = "".join(f'<feGaussianBlur in="SourceGraphic" stdDeviation="{d}" result="b{i}"/>' for i, d in enumerate(devs))
-    merge = "".join(f'<feMergeNode in="b{i}"/>' for i in reversed(range(len(devs))))
-    s.defs.append(f'<filter id="{fid}" x="-60%" y="-60%" width="220%" height="220%">{nodes}'
-                  f'<feMerge>{merge}<feMergeNode in="SourceGraphic"/></feMerge></filter>')
+def tmux(s, x, y, w, active):
+    """tmux status line; the current window is shown in inverse video."""
+    out = [f'<rect x="{x}" y="{y}" width="{w}" height="30" fill="{C["bar"]}"/>']
+    g, cx = s.text(x + 20, y + 21, "[bk246]", 18, "amb")
+    out.append(g)
+    cx += 14
+    for i, name in enumerate(WINDOWS):
+        label = f"{i}:{name}" + ("*" if i == active else "")
+        if i == active:
+            tw = s.width(label, 18)
+            out.append(f'<rect x="{cx - 5:.1f}" y="{y + 5}" width="{tw + 10:.1f}" height="21" fill="{C["amb"]}"/>')
+        g, cx = s.text(cx, y + 21, label, 18, "screen" if i == active else "mid")
+        out.append(g)
+        cx += 16
+    out.append(s.text(x + w - 20, y + 21, f'"{HOST}"  mumbai, in', 18, "dim", "end")[0])
+    return "".join(out)
 
 
-# ── hero: the city ──────────────────────────────────────────────────────────
-
-HERO_CSS = """
-@keyframes rainA{to{transform:translate(26.4px,150px)}}
-@keyframes rainB{to{transform:translate(17.6px,100px)}}
-@keyframes fly{to{transform:translateX(-1240px)}}
-@keyframes flare{0%,100%{transform:scale(1,1);opacity:.95}18%{transform:scale(.8,1.3);opacity:1}37%{transform:scale(1.1,.85);opacity:.8}
- 61%{transform:scale(.9,1.2);opacity:1}83%{transform:scale(1.05,.9);opacity:.85}}
-@keyframes gc{0%,87%,100%{transform:translate(0,0)}88%{transform:translate(-5px,1px)}90%{transform:translate(4px,-1px)}92%{transform:translate(-3px,0)}94%{transform:translate(1px,1px)}}
-@keyframes gm{0%,87%,100%{transform:translate(0,0)}88%{transform:translate(5px,-1px)}90%{transform:translate(-4px,1px)}92%{transform:translate(3px,0)}94%{transform:translate(-1px,-1px)}}
-@keyframes slice{0%,88%,93%,100%{opacity:0;transform:translateX(0)}89%{opacity:1;transform:translateX(16px)}91%{opacity:1;transform:translateX(-11px)}}
-.rainA{animation:rainA .55s linear infinite}
-.rainB{animation:rainB .8s linear infinite}
-.fly{animation:fly 28s linear infinite}
-.flare{transform-box:fill-box;transform-origin:50% 100%;animation:flare 2.6s ease-in-out infinite}
-.gc{animation:gc 6s steps(1) infinite}
-.gm{animation:gm 6s steps(1) infinite}
-.slice{animation:slice 6s steps(1) infinite}
-"""
-
-SKEW = math.tan(math.radians(10))  # rain falls 10° off vertical
+def prompt(s, x, y, cmd="", size=21, t=None, cps=16):
+    """guest@bladekiller246:~$ <cmd typed in from t>."""
+    g1, cx, _ = s.runs(x, y, [(f"guest@{HOST}", "mid"), (":~$ ", "dim")], size)
+    g2, cx, t2 = s.runs(cx, y, [(cmd, "hi")], size, t=t, cps=cps) if cmd else ("", cx, t)
+    return g1 + g2, cx, t2
 
 
-def skyline(rnd, x0, x1, base, height, wmin, wmax, gap=(1, 8)):
-    """Boxes (x, y, w, h) marching left to right; `height(x)` picks the range."""
-    boxes, x = [], x0
-    while x < x1:
-        w = rnd.uniform(wmin, wmax)
-        lo, hi = height(x)
-        h = rnd.uniform(lo, hi)
-        boxes.append((x, base - h, w, h))
-        x += w + rnd.uniform(*gap)
-    return boxes
+def cursor(x, y, t, size=21):
+    return (f'<rect class="cur" x="{x + 2:.1f}" y="{y - size * .72:.1f}" width="{size * .45:.1f}" '
+            f'height="{size * .86:.1f}" fill="{C["amb"]}" style="animation-delay:{t:.2f}s,{t:.2f}s"/>')
 
 
-def draw_buildings(s, rnd, boxes, base, fill, antenna_light=False):
-    d, beacons = [], []
-    for x, y, w, h in boxes:
-        d.append(f"M{x:.1f} {y:.1f}h{w:.1f}V{base}h{-w:.1f}Z")
-        if rnd.random() < .45 and w > 22:  # setback on the roof
-            rw, rh = w * rnd.uniform(.35, .6), rnd.uniform(8, 22)
-            rx = x + rnd.uniform(0, w - rw)
-            d.append(f"M{rx:.1f} {y - rh:.1f}h{rw:.1f}v{rh + 1:.1f}h{-rw:.1f}Z")
-            y -= rh
-        if rnd.random() < .3:  # antenna
-            ax, ah = x + rnd.uniform(.2, .8) * w, rnd.uniform(10, 26)
-            d.append(f"M{ax:.1f} {y - ah:.1f}h1.4V{y + 1:.1f}h-1.4Z")
-            if antenna_light:
-                beacons.append((ax + .7, y - ah))
-    s.add(f'<path d="{"".join(d)}" fill="{fill}"/>')
-    for bx, by in beacons:
-        s.add(f'<circle class="blink" style="animation-duration:{rnd.uniform(1.6, 3.2):.1f}s" '
-              f'cx="{bx:.1f}" cy="{by:.1f}" r="1.4" fill="{N["mag"]}"/>')
+def line(content, t):
+    return f'<g class="ln"{at(t)}>{content}</g>'
 
 
-def draw_lights(s, rnd, boxes, density, palette, twinkle=.06):
-    """Lit windows, batched into one path per colour so the file stays small."""
-    static = {}
-    for x, y, w, h in boxes:
-        for wy in range(int(y + 6), int(y + h - 4), 7):
-            for wx in range(int(x + 4), int(x + w - 4), 6):
-                if rnd.random() >= density:
-                    continue
-                col, op = rnd.choice(palette)
-                if rnd.random() < twinkle:
-                    s.add(f'<rect class="twinkle" style="animation-duration:{rnd.uniform(3, 9):.1f}s;'
-                          f'animation-delay:-{rnd.uniform(0, 9):.1f}s" x="{wx}" y="{wy}" width="2.4" height="3.2" '
-                          f'fill="{col}" opacity="{op}"/>')
+# ── sections ────────────────────────────────────────────────────────────────
+
+def hero(font):
+    W, H = 960, 560
+    sx, sy, sw, sh = 34, 32, 892, 428
+    s = Svg(font, W, H, "A retro amber CRT terminal boots up: BIOS lines mount B.Tech IT, Honours in Cyber Security, "
+                        "class of 2028, load machine-learning and offensive-security modules, link up from Mumbai. "
+                        "The name Mann Kuvadiya lights up on a dot-matrix, then: machine learning × offensive security. "
+                        "Agents that hunt auth bugs, honeypots that learn from attackers.")
+    s.defs.append(FX)
+    s.defs.append('<linearGradient id="bez" x2="0" y2="1"><stop offset="0" stop-color="#2e2b27"/>'
+                  '<stop offset="1" stop-color="#191715"/></linearGradient>'
+                  '<radialGradient id="knob" cx="40%" cy="35%"><stop offset="0" stop-color="#4a453e"/>'
+                  '<stop offset="1" stop-color="#1c1a17"/></radialGradient>'
+                  '<radialGradient id="glare" cx="30%" cy="10%" r="60%"><stop offset="0" stop-color="#fff" stop-opacity=".07"/>'
+                  '<stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>'
+                  '<filter id="led" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="4"/></filter>')
+
+    # bezel
+    s.body.append(f'<rect width="{W}" height="{H}" rx="30" fill="url(#bez)"/>'
+                  f'<rect x="1" y="1" width="{W - 2}" height="{H - 2}" rx="29" fill="none" stroke="#ffffff" stroke-opacity=".07"/>'
+                  f'<rect x="{sx - 10}" y="{sy - 10}" width="{sw + 20}" height="{sh + 20}" rx="28" fill="#050302" '
+                  f'stroke="#000" stroke-opacity=".6" stroke-width="2"/>')
+
+    x0, c = 68, []
+    t0 = .8
+    # BIOS
+    c.append(line(s.runs(x0, 74, [("BK-246 BIOS v3.0", "mid"), ("  ·  P3 amber phosphor  ·  80x25", "dim")], 19)[0]
+                  + s.text(sx + sw - 34, 74, f"(c) 2026 {HOST}", 19, "dim", "end")[0], t0))
+    for i, (label, value, status) in enumerate(BIOS):
+        y, t = 102 + i * 24, t0 + .3 * (i + 1)
+        g, ex = s.text(x0, y, label, 19, "mid")
+        dots1 = "." * int((222 - ex) / 7.6)
+        g += s.text(ex + 6, y, dots1, 19, "faint")[0]
+        g2, vx = s.text(236, y, value, 19, "amb")
+        right = sx + sw - 34
+        st = f"[ {status} ]"
+        stw = s.width(st, 19)
+        dots2 = "." * max(0, int((right - stw - vx - 16) / 7.6))
+        g += g2 + s.text(vx + 8, y, dots2, 19, "faint")[0]
+        c.append(line(g, t) + line(s.text(right, y, st, 19, "hi", "end")[0], t + .18))
+    c.append(line(s.text(x0, 174, "starting session for guest ...", 19, "dim")[0], t0 + 1.35))
+
+    # dot-matrix name
+    rnd = random.Random(246)
+    p, dot, top, col, tn = 10.5, 8.4, 200, 0, 2.25
+    unlit, lit = [], []
+    for ch in "MANN KUVADIYA":
+        if ch == " ":
+            col += 4
+            continue
+        for r, row in enumerate(DOTS[ch].split()):
+            for cc, bit in enumerate(row):
+                x, y = x0 + (col + cc) * p, top + r * p
+                if bit == "1":
+                    d = tn + (col + cc) / 75 * .8 + rnd.random() * .25
+                    lit.append(f'<rect class="px" x="{x:.1f}" y="{y:.1f}" width="{dot}" height="{dot}" rx="1.2"{at(d)}/>')
                 else:
-                    static.setdefault((col, op), []).append(f"M{wx} {wy}h2.4v3.2h-2.4z")
-    for (col, op), d in static.items():
-        s.add(f'<path d="{"".join(d)}" fill="{col}" opacity="{op}"/>')
+                    unlit.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{dot}" height="{dot}" rx="1.2"/>')
+        col += 6
+    c.append(f'<g fill="{C["faint"]}" opacity=".7">{"".join(unlit)}</g><g fill="{C["amb"]}">{"".join(lit)}</g>')
+
+    # tagline, subline, prompt
+    tt = 3.35
+    c.append(s.text(x0, 324, TAGLINE, 30, "hi", t=tt, cps=34)[0])
+    tt += len(TAGLINE) / 34 + .25
+    c.append(line(s.text(x0, 358, SUBLINE, 20, "mid")[0], tt))
+    g, cx, _ = prompt(s, x0, 404)
+    c.append(line(g, tt + .45) + cursor(cx, 404, tt + .45))
+    c.append(line(tmux(s, sx, sy + sh - 30, sw, 0), t0))
+
+    over = (f'<rect x="{sx}" y="{sy}" width="{sw}" height="{sh}" fill="url(#glare)"/>'
+            f'<rect class="pwr" x="{sx}" y="{sy}" width="{sw}" height="{sh}" fill="{C["hi"]}"/>')
+    s.body.append(screen(s, sx, sy, sw, sh, 22, "".join(c), over))
+
+    # bottom strip: badge, vents, power LED, knobs
+    by = 514
+    g, ex = s.text(46, by + 8, "BK-246", 26, "#6e665b")
+    s.body.append(g + s.text(ex + 14, by + 7, "AMBER PHOSPHOR TERMINAL", 16, "#5c554b")[0])
+    s.body.append("".join(f'<rect x="{430 + i * 16}" y="{by - 12}" width="5" height="24" rx="2.5" fill="#0f0e0c"/>'
+                          for i in range(7)))
+    s.body.append(f'<circle cx="796" cy="{by}" r="9" fill="{C["amb"]}" opacity=".55" filter="url(#led)"/>'
+                  f'<circle cx="796" cy="{by}" r="4.5" fill="{C["hi"]}"/>')
+    s.body.append(s.text(812, by + 6, "PWR", 15, "#6e665b")[0])
+    for kx in (872, 914):
+        s.body.append(f'<circle cx="{kx}" cy="{by}" r="14" fill="url(#knob)" stroke="#0c0b0a" stroke-width="2"/>'
+                      f'<line x1="{kx}" y1="{by - 11}" x2="{kx}" y2="{by - 5}" stroke="#8a8174" stroke-width="2" stroke-linecap="round"/>')
+    s.save("boot.svg")
 
 
-def rain(s, pid, rnd, tile, n, lmin, lmax, color, op, width, cls, W, H):
-    """Vertical streaks in a pattern skewed 10°; moving the layer by one skewed
-    tile loops seamlessly."""
-    d = []
-    for _ in range(n):
-        x, y, L = rnd.uniform(0, tile), rnd.uniform(0, tile), rnd.uniform(lmin, lmax)
-        for oy in (0, -tile):  # wrap streaks that run off the bottom edge
-            d.append(f"M{x:.1f} {y + oy:.1f}v{L:.1f}")
-    s.defs.append(f'<pattern id="{pid}" width="{tile}" height="{tile}" patternUnits="userSpaceOnUse" '
-                  f'patternTransform="skewX(10)"><path d="{"".join(d)}" stroke="{color}" stroke-opacity="{op}" '
-                  f'stroke-width="{width}" stroke-linecap="round"/></pattern>')
-    s.add(f'<rect class="{cls}" x="-120" y="{-tile - 10}" width="{W + 240}" height="{H + tile + 20}" fill="url(#{pid})"/>')
+def keycap(font, name, legend, label):
+    W, H = 260, 68
+    s = Svg(font, W, H, label.title())
+    s.defs.append(FX.split("</filter>")[0] + "</filter>")
+    s.defs.append('<linearGradient id="cap" x2="0" y2="1"><stop offset="0" stop-color="#34302a"/>'
+                  '<stop offset="1" stop-color="#211e1a"/></linearGradient>')
+    s.body.append(f'<rect x="1" y="5" width="{W - 2}" height="{H - 6}" rx="11" fill="#0d0c0a"/>'
+                  f'<rect x="1" y="1" width="{W - 2}" height="{H - 8}" rx="11" fill="url(#cap)" stroke="#45403a"/>'
+                  f'<rect x="7" y="5" width="{W - 14}" height="{H - 20}" rx="8" fill="#ffffff" fill-opacity=".03"/>')
+    g = s.text(18, 24, legend, 16, "dim")[0]
+    g += s.text(18, 49, label, 28, "amb")[0]
+    ax, ay = W - 38, 22  # ↗ arrow
+    g += (f'<path d="M{ax} {ay + 16}L{ax + 16} {ay}M{ax + 5} {ay}H{ax + 16}V{ay + 11}" fill="none" '
+          f'stroke="{C["amb"]}" stroke-width="2.2" stroke-linecap="square"/>')
+    s.body.append(f'<g filter="url(#glow)">{g}</g>')
+    s.save(name)
 
 
-def hero(fonts):
-    W, H = 1000, 440
-    rnd = random.Random(2019)
-    s = Svg(fonts, W, H, "A neon city at night in the rain: Mann Kuvadiya, machine learning × security, Mumbai. "
-                         "Kanji and katakana neon signs read 'machine learning' and 'security'.")
-    s.css.append(HERO_CSS)
-    frame = chamfer(0, 0, W, H, tl=28, br=28)
-    s.defs.append(
-        f'<clipPath id="frame"><path d="{frame}"/></clipPath>'
-        '<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">'
-        '<stop offset="0" stop-color="#04040b"/><stop offset=".36" stop-color="#0c0820"/>'
-        '<stop offset=".6" stop-color="#231040"/><stop offset=".74" stop-color="#4b1646"/>'
-        '<stop offset=".84" stop-color="#7a2440"/><stop offset="1" stop-color="#1a0812"/></linearGradient>'
-        f'<radialGradient id="haze"><stop offset="0" stop-color="{N["amber"]}" stop-opacity=".42"/>'
-        f'<stop offset="1" stop-color="{N["amber"]}" stop-opacity="0"/></radialGradient>'
-        f'<radialGradient id="haze2"><stop offset="0" stop-color="{N["mag"]}" stop-opacity=".25"/>'
-        f'<stop offset="1" stop-color="{N["mag"]}" stop-opacity="0"/></radialGradient>'
-        '<linearGradient id="pyr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3c1b44"/>'
-        '<stop offset="1" stop-color="#1b0c28"/></linearGradient>'
-        '<radialGradient id="flame" cy=".7"><stop offset="0" stop-color="#fff3c4"/>'
-        f'<stop offset=".35" stop-color="{N["amber"]}"/><stop offset="1" stop-color="#ff4d1a" stop-opacity="0"/></radialGradient>'
-        f'<radialGradient id="flarehalo"><stop offset="0" stop-color="{N["amber"]}" stop-opacity=".35"/>'
-        f'<stop offset="1" stop-color="{N["amber"]}" stop-opacity="0"/></radialGradient>'
-        '<linearGradient id="fog" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05050a" stop-opacity="0"/>'
-        '<stop offset="1" stop-color="#05050a" stop-opacity=".85"/></linearGradient>'
-        '<linearGradient id="farfog" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4b1646" stop-opacity="0"/>'
-        '<stop offset="1" stop-color="#4b1646" stop-opacity=".45"/></linearGradient>'
-        '<linearGradient id="trail" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".7"/>'
-        '<stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>'
-        '<pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="1.2" fill="#000"/></pattern>'
-        '<radialGradient id="vignette" r=".75"><stop offset=".55" stop-color="#000" stop-opacity="0"/>'
-        '<stop offset="1" stop-color="#000" stop-opacity=".7"/></radialGradient>'
-    )
-    glow_filter(s, "neon", 2, 7)
-    glow_filter(s, "soft", 9)
-    s.defs.append('<filter id="blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>')
-
-    s.add('<g clip-path="url(#frame)">')
-    s.add(f'<rect width="{W}" height="{H}" fill="url(#sky)"/>')
-    s.add('<ellipse cx="760" cy="340" rx="420" ry="170" fill="url(#haze)"/>')
-    s.add('<ellipse cx="180" cy="370" rx="320" ry="120" fill="url(#haze2)"/>')
-
-    # far: a pyramid arcology, gas flares, hazy blocks
-    s.add('<path d="M800 200L960 350H640Z" fill="url(#pyr)"/>')
-    pyr = []
-    for r in range(9):
-        y = 214 + r * 14
-        half = (y - 200) * 160 / 150
-        for x in range(int(800 - half + 4), int(800 + half - 3), 6):
-            if rnd.random() < .38:
-                pyr.append(f"M{x} {y}h2v1.6h-2z")
-    s.add(f'<path d="{"".join(pyr)}" fill="{N["amber"]}" opacity=".55"/>')
-    far = skyline(rnd, -10, W + 10, H, lambda x: (95, 145) if x < 560 else (115, 185), 22, 58)
-    draw_buildings(s, rnd, far, H, "#1c0d2b")
-    for fx, top, dur in ((590, 262, 2.3), (962, 246, 3.1)):
-        s.add(f'<rect x="{fx - 3}" y="{top}" width="6" height="{H - top}" fill="#170a22"/>')
-        s.add(f'<circle cx="{fx}" cy="{top - 10}" r="46" fill="url(#flarehalo)"/>')
-        s.add(f'<ellipse class="flare" style="animation-duration:{dur}s" cx="{fx}" cy="{top - 14}" rx="7" ry="16" '
-              f'fill="url(#flame)" filter="url(#blur)"/>')
-    s.add(f'<rect y="240" width="{W}" height="{H - 240}" fill="url(#farfog)"/>')
-
-    # mid
-    mid = skyline(rnd, -10, W + 10, H, lambda x: (55, 105) if x < 560 else (85, 150), 18, 46)
-    draw_buildings(s, rnd, mid, H, "#0e0718", antenna_light=True)
-    draw_lights(s, rnd, mid, .09, [("#ffb867", .55), ("#ffb867", .35), ("#6ff0ff", .45)])
-
-    # near, with two towers carrying the neon
-    near = skyline(rnd, -10, W + 10, H, lambda x: (28, 70) if x < 560 else (45, 110), 26, 70, gap=(0, 4))
-    towers = [(612, 236, 74, H - 236), (866, 210, 80, H - 210)]
-    draw_buildings(s, rnd, near, H, "#060509")
-    s.add("".join(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#060509"/>' for x, y, w, h in towers))
-    draw_lights(s, rnd, near + towers, .045, [("#ffb867", .5), ("#6ff0ff", .5), ("#ff5c8a", .45)])
-    for (x, y, w, h), text, col, flick in ((towers[0], "機械学習", N["cyan"], False),
-                                           (towers[1], "セキュリティ", N["mag"], True)):
-        size = 21
-        sw, sh = 36, len(text) * size * 1.08 + 18
-        sx, sy = x + (w - sw) / 2, y + 22
-        s.add(f'<g{" class=" + chr(34) + "flicker" + chr(34) if flick else ""}>')
-        s.add(f'<rect x="{sx:.1f}" y="{sy}" width="{sw}" height="{sh:.1f}" fill="#0b0610" stroke="{col}" '
-              f'stroke-opacity=".7" filter="url(#neon)"/>')
-        s.vtext(x + w / 2, sy + 9 + size * .86, text, size, "jp", col, attrs=' filter="url(#neon)"')
-        s.add("</g>")
-    s.add(f'<rect y="300" width="{W}" height="{H - 300}" fill="url(#fog)"/>')
-
-    # a spinner crossing the sky
-    s.add(f'<g class="fly"><g transform="translate({W + 80} 84)">'
-          '<path d="M6 0H70" stroke="url(#trail)" stroke-width="1.3"/>'
-          f'<ellipse rx="8" ry="2.6" fill="#0d0d16" stroke="{N["mid"]}" stroke-opacity=".5" stroke-width=".6"/>'
-          '<circle cx="-7" cy="0" r="1.8" fill="#fff" filter="url(#neon)"/>'
-          f'<circle class="blink" cx="5" cy="-1.5" r="1.3" fill="{N["mag"]}"/></g></g>')
-
-    rain(s, "rainB", rnd, 100, 9, 6, 14, "#9fe8ff", .16, .7, "rainB", W, H)
-
-    # identity
-    x0, ny = 56, 176
-    s.text(x0, 98, [("// ", N["mag"]), ("SYS.ID — BLADEKILLER246", N["mid"])], size=11.5, track=2.5)
-    name, nsize = "MANN KUVADIYA", 62
-    nw = s.measure(name, nsize, "d", 2)
-    if nw > 560:
-        raise SystemExit(f"hero name is {nw:.0f}px wide; the sky holds 560")
-    s.add('<g opacity=".45" filter="url(#soft)">')
-    s.text(x0, ny, name, size=nsize, face="d", fill=N["cyan"], track=2)
-    s.add("</g>")
-    s.add('<g class="gc" opacity=".9">')
-    s.text(x0 - 2.5, ny, name, size=nsize, face="d", fill=N["cyan"], track=2)
-    s.add('</g><g class="gm" opacity=".9">')
-    s.text(x0 + 2.5, ny, name, size=nsize, face="d", fill=N["mag"], track=2)
-    s.add("</g>")
-    s.text(x0, ny, name, size=nsize, face="d", fill=N["white"], track=2)
-    s.defs.append(f'<clipPath id="band"><rect x="{x0 - 30}" y="{ny - 32}" width="{nw + 60:.0f}" height="10"/></clipPath>')
-    s.add('<g clip-path="url(#band)"><g class="slice">')
-    s.text(x0, ny, name, size=nsize, face="d", fill=N["cyan"], track=2)
-    s.add("</g></g>")
-    s.text(x0, ny + 40, "MACHINE LEARNING × SECURITY", size=16, face="ds", fill=N["cyan"], track=6)
-    s.text(x0, ny + 68, [("MUMBAI, IN", N["text"]), ("   N 19.07°  E 72.87°", N["dim"])], size=12, track=2)
-
-    rain(s, "rainA", rnd, 150, 7, 12, 26, "#c4f3ff", .24, 1, "rainA", W, H)
-
-    # HUD
-    c, L = 16, 26
-    hud = [f"M{c} {c + L}V{c}H{c + L}", f"M{W - c - L} {c}H{W - c}V{c + L}",
-           f"M{c} {H - c - L}V{H - c}H{c + L}", f"M{W - c - L} {H - c}H{W - c}V{H - c - L}"]
-    s.add(f'<path d="{"".join(hud)}" fill="none" stroke="{N["cyan"]}" stroke-opacity=".6" stroke-width="1.5"/>')
-    w = s.text(W - 44, 46, "2077", size=11.5, fill=N["dim"], anchor="end", track=2)
-    s.text(W - 44 - w - 10, 46, "ブレードランナー", size=12, face="jp", fill=N["mag"], anchor="end", track=1)
-    s.add(f'<circle class="blink" cx="{c + 26}" cy="{H - 42}" r="3" fill="{N["cyan"]}"/>')
-    s.text(c + 36, H - 38, "SIGNAL · ONLINE", size=11, fill=N["mid"], track=2.5)
-
-    s.add(f'<rect width="{W}" height="{H}" fill="url(#scan)" opacity=".14"/>')
-    s.add(f'<rect width="{W}" height="{H}" fill="url(#vignette)"/>')
-    s.add("</g>")
-    s.add(f'<path d="{frame}" fill="none" stroke="{N["cyan"]}" stroke-opacity=".35" stroke-width="1.5"/>')
-    s.save("hero.svg")
+def finger(font):
+    W, H = 960, 380
+    s = Svg(font, W, H, "$ finger mann. Login: mann. Name: Mann Kuvadiya. Office: KJSCE, Somaiya Vidyavihar. "
+                        "Location: Mumbai, IN. On GitHub since 25 March 2021. Project: " + PROJECT + " Plan: " + " ".join(PLAN))
+    x0, x2, lh = 40, 376, 27
+    c, (g, cx, t) = [], prompt(s, x0, 46, "finger mann", t=.4)
+    c.append(g)
+    t += .3
+    y = 46
+    for left, right in FINGER:
+        y += lh
+        g = s.runs(x0, y, [(left[0] + " ", "dim"), (left[1], "hi")])[0]
+        g += s.runs(x2, y, [(right[0] + " ", "dim"), (right[1], "hi")])[0]
+        c.append(line(g, t))
+        t += .06
+    y += lh
+    c.append(line(s.runs(x0, y, [("On since ", "dim"), ("Thu Mar 25 2021", "amb"), (" on github", "dim")])[0], t))
+    y += lh
+    c.append(line(s.text(x0, y, "No mail.", 21, "dim")[0], t + .06))
+    y += lh
+    c.append(line(s.runs(x0, y, [("Project: ", "dim"), (PROJECT, "amb")])[0], t + .12))
+    y += lh
+    c.append(line(s.text(x0, y, "Plan:", 21, "dim")[0], t + .18))
+    for i, txt in enumerate(PLAN):
+        y += lh
+        c.append(line(s.text(x0 + 2 * 8.4, y, txt, 21, "hi" if i == 0 else "mid")[0], t + .24 + i * .06))
+    panel(s, "".join(c), active=1)
+    s.save("finger.svg")
 
 
-# ── dossier ─────────────────────────────────────────────────────────────────
-
-DOSSIER = [
-    ("SUBJECT", [("MANN KUVADIYA", N["white"], "d")]),
-    ("ALIAS", [("BLADERUNNER2077", N["mag"])]),
-    ("CLASS", [("B.TECH IT · HONOURS IN CYBER SECURITY · '28", None)]),
-    ("ORIGIN", [("KJSCE, SOMAIYA VIDYAVIHAR · MUMBAI", None)]),
-    ("FUNCTION", [("MACHINE LEARNING × OFFENSIVE SECURITY", N["cyan"])]),
-    ("INCEPT", [("2021.03.25", None), ("   joined github", N["dim"], "m")]),
-    ("STATUS", [("ACTIVE — BUILDING CREEP", N["yel"])]),
-]
-
-
-def dossier(fonts):
-    W, H = 1000, 300
-    rnd = random.Random(1982)
-    s = Svg(fonts, W, H, "Dossier. Subject: Mann Kuvadiya, alias Bladerunner2077. B.Tech IT with Honours in Cyber "
-                         "Security, class of 2028, KJSCE, Somaiya Vidyavihar, Mumbai. Function: machine learning × "
-                         "offensive security. Status: active, building Creep.")
-    s.css.append("@keyframes sweep{from{transform:translateY(0)}to{transform:translateY(150px)}}"
-                 "@keyframes dilate{50%{transform:scale(1.18)}}"
-                 ".sweep{animation:sweep 2.8s ease-in-out infinite alternate}"
-                 ".dilate{transform-box:fill-box;transform-origin:center;animation:dilate 4s ease-in-out infinite}")
-    glow_filter(s, "neon", 2, 5)
-    panel(s, 8, 8, W - 16, H - 16)
-    section_label(s, 36, 44, "01", "DOSSIER")
-    s.text(W - 40, 44, "REF · BK-246", size=11, fill=N["dim"], anchor="end", track=2.5)
-    s.add(f'<path d="M36 60H{W - 40}" stroke="{N["line"]}"/>')
-
-    # iris scan
-    ex, ey = 150, 172
-    bx, by, bw, bh = 40, 78, 220, 190
-    br = [f"M{bx} {by + 16}V{by}H{bx + 16}", f"M{bx + bw - 16} {by}H{bx + bw}V{by + 16}",
-          f"M{bx} {by + bh - 16}V{by + bh}H{bx + 16}", f"M{bx + bw - 16} {by + bh}H{bx + bw}V{by + bh - 16}"]
-    s.add(f'<path d="{"".join(br)}" fill="none" stroke="{N["cyan"]}" stroke-opacity=".6" stroke-width="1.5"/>')
-    s.defs.append(
-        f'<clipPath id="lid"><path d="M{ex - 74} {ey}Q{ex} {ey - 62} {ex + 74} {ey}Q{ex} {ey + 62} {ex - 74} {ey}Z"/></clipPath>'
-        '<radialGradient id="iris"><stop offset="0" stop-color="#1a0b05"/><stop offset=".42" stop-color="#6e2c0c"/>'
-        f'<stop offset=".72" stop-color="{N["amber"]}"/><stop offset=".9" stop-color="#ffd28a"/>'
-        '<stop offset="1" stop-color="#3a1a0a"/></radialGradient>'
-    )
-    for r, dash, op in ((60, "2 5", .35), (72, "", .18)):
-        s.add(f'<circle cx="{ex}" cy="{ey}" r="{r}" fill="none" stroke="{N["cyan"]}" stroke-opacity="{op}"'
-              f'{" stroke-dasharray=" + chr(34) + dash + chr(34) if dash else ""}/>')
-    s.add(f'<path d="M{ex - 96} {ey}H{ex - 80}M{ex + 80} {ey}H{ex + 96}M{ex} {ey - 92}V{ey - 76}M{ex} {ey + 76}V{ey + 92}" '
-          f'stroke="{N["cyan"]}" stroke-opacity=".5"/>')
-    s.add(f'<path d="M{ex - 74} {ey}Q{ex} {ey - 62} {ex + 74} {ey}Q{ex} {ey + 62} {ex - 74} {ey}Z" fill="#07070e"/>')
-    s.add('<g clip-path="url(#lid)">')
-    s.add(f'<circle cx="{ex}" cy="{ey}" r="38" fill="url(#iris)"/>')
-    fibres = "".join(
-        f"M{ex + 16 * math.cos(a):.1f} {ey + 16 * math.sin(a):.1f}L{ex + 36 * math.cos(a):.1f} {ey + 36 * math.sin(a):.1f}"
-        for a in (i * math.tau / 40 + rnd.uniform(-.05, .05) for i in range(40)))
-    s.add(f'<path d="{fibres}" stroke="#ffd08a" stroke-opacity=".28" stroke-width=".8"/>')
-    s.add(f'<circle class="dilate" cx="{ex}" cy="{ey}" r="13" fill="#020203"/>')
-    s.add(f'<ellipse cx="{ex + 11}" cy="{ey - 12}" rx="5" ry="3.5" fill="#fff" opacity=".85"/>')
-    s.add(f'<circle cx="{ex - 14}" cy="{ey + 10}" r="1.6" fill="{N["cyan"]}" opacity=".8"/>')
-    s.add("</g>")
-    s.add(f'<path d="M{ex - 74} {ey}Q{ex} {ey - 62} {ex + 74} {ey}Q{ex} {ey + 62} {ex - 74} {ey}Z" fill="none" '
-          f'stroke="{N["cyan"]}" stroke-opacity=".55" stroke-width="1.2"/>')
-    s.add(f'<g class="sweep"><rect x="{bx + 8}" y="{by + 12}" width="{bw - 16}" height="1.6" fill="{N["cyan"]}" '
-          f'filter="url(#neon)" opacity=".85"/></g>')
-    s.text(bx + bw / 2, by + bh + 1, [("IRIS SCAN  ", N["mid"]), ("✓ MATCH", N["cyan"], "mb")], size=10.5,
-           anchor="middle", track=2)
-
-    # fields
-    lx, vx = 300, 420
-    for i, (label, runs) in enumerate(DOSSIER):
-        y = 96 + i * 28
-        s.text(lx, y, label, size=11, fill=N["dim"], track=2.5)
-        if label == "STATUS":
-            s.add(f'<circle class="blink" cx="{vx + 4}" cy="{y - 4.5}" r="3.5" fill="{N["yel"]}"/>')
-            s.text(vx + 16, y, runs, size=15, face="dm", fill=N["text"], track=1.5)
-        else:
-            w = s.text(vx, y, runs, size=15, face="dm", fill=N["text"], track=1.5)
-            if vx + w > 920:
-                raise SystemExit(f"dossier {label} runs to x={vx + w:.0f}; the panel holds 920")
-
-    # barcode down the right edge
-    bars, y = [], 80
-    while y < 262:
-        h = rnd.choice((1, 1, 2, 3))
-        bars.append(f"M944 {y}h24v{h}h-24z")
-        y += h + rnd.choice((1, 2, 2, 3))
-    s.add(f'<path d="{"".join(bars)}" fill="{N["dim"]}" opacity=".5"/>')
-    s.save("dossier.svg")
+def nmap(font):
+    W, H = 960, 574
+    s = Svg(font, W, H, "$ nmap -sV -p- mann. Open ports, one per skill: " +
+            "; ".join(f"{p} {svc}: {v}" for p, svc, v in PORTS) + ".")
+    x0, lh, cw = 40, 26, 8.4
+    cols = [0, 11, 18, 32]
+    c, (g, cx, t) = [], prompt(s, x0, 46, "nmap -sV -p- mann", t=.4)
+    c.append(g)
+    t += .35
+    head = [("Starting Nmap 7.95 ( https://nmap.org )", "dim"), ("Nmap scan report for mann (19.07.72.87)", "mid"),
+            ("Host is up (0.0028s latency).", "dim"), ("Not shown: 65526 closed tcp ports (reset)", "dim")]
+    y = 46
+    for txt, fill in head:
+        y += lh
+        c.append(line(s.text(x0, y, txt, 21, fill)[0], t))
+        t += .12
+    y += lh * 2
+    c.append(line("".join(s.text(x0 + col * cw, y, h, 21, "dim")[0]
+                          for col, h in zip(cols, ["PORT", "STATE", "SERVICE", "VERSION"])), t))
+    for port, svc, ver in PORTS:
+        y += lh
+        t += .14
+        g = "".join(s.text(x0 + col * cw, y, txt, 21, fill)[0]
+                    for col, txt, fill in zip(cols, [port, "open", svc, ver], ["hi", "amb", "mid", "hi"]))
+        c.append(line(g, t))
+    y += lh * 2
+    c.append(line(s.runs(x0, y, [("Service Info: ", "dim"), ("OS: Linux; CPE: cpe:/a:kjsce:btech_it_hons_cyber_security:2028", "mid")])[0], t + .3))
+    y += lh
+    c.append(line(s.text(x0, y, "Nmap done: 1 IP address (1 host up) scanned since 2021", 21, "amb")[0], t + .45))
+    panel(s, "".join(c), active=2)
+    s.save("nmap.svg")
 
 
-# ── case files ──────────────────────────────────────────────────────────────
-
-CASES = [
-    dict(file="case-creep.svg", title="CREEP", status="ACTIVE", color="cyan", live=True, link=False,
-         desc="LLM agent that reads HAR + OpenAPI, infers the auth model, then breaks it",
-         tech="python · fastapi · llm apis"),
-    dict(file="case-honeypot.svg", title="MED-DEVICE HONEYPOT", status="RESEARCH", color="amber", live=False, link=False,
-         desc="Raspberry Pi posing as medical devices; ML clusters whoever attacks it",
-         tech="python · scikit-learn · rpi"),
-    dict(file="case-datnet.svg", title="DATNET", status="RESEARCH", color="amber", live=False, link=True,
-         desc="Dual-axis transformer: channel + spatial attention for image restoration",
-         tech="pytorch · transformers"),
-    dict(file="case-semicon.svg", title="SEMICON-ML", status="SHIPPED", color="yel", live=False, link=True,
-         desc="NAFNet variant for KLA's hackathon: joint denoise + 2× super-resolution",
-         tech="pytorch · nafnet"),
-    dict(file="case-privacylayer.svg", title="PRIVACYLAYER", status="DEMOED", color="mag", live=False, link=False,
-         desc="Self-sovereign identity with zero-knowledge selective disclosure",
-         tech="solidity · circom · react native"),
-    dict(file="case-dvwa.svg", title="UPLOAD → RCE", status="WRITEUP", color="violet", live=False, link=True,
-         desc="VAPT proof of concept: an unrestricted file upload escalated to RCE",
-         tech="php · vapt · owasp"),
-]
+def msf_head(font):
+    W, H = 960, 262
+    s = Svg(font, W, H, "$ msfconsole -q. msf6 > search author:bladekiller246. Matching modules:")
+    x0 = 40
+    c, (g, cx, t) = [], prompt(s, x0, 46, "msfconsole -q", t=.4)
+    c.append(g)
+    t += .5
+    g, ex = s.text(x0, 74, "msf6", 21, "hi")
+    g += f'<rect x="{x0}" y="78" width="{ex - x0:.1f}" height="1.6" fill="{C["hi"]}"/>'
+    g2, cx, t2 = s.runs(ex, 74, [(" > ", "hi"), ("search author:bladekiller246", "hi")], t=t, cps=16)
+    c.append(line(g, t - .1) + g2)
+    t = t2 + .3
+    c.append(line(s.text(x0, 128, "Matching Modules", 21, "amb")[0] + s.text(x0, 152, "================", 21, "amb")[0], t))
+    hdr = [(40, "#", "start"), (84, "Name", "start"), (640, "Status", "start"), (W - 40, "Link", "end")]
+    g = "".join(s.text(x, 206, h, 21, "dim", a)[0] + s.text(x, 230, "-" * len(h), 21, "dim", a)[0] for x, h, a in hdr)
+    c.append(line(g, t + .1))
+    panel(s, "".join(c))
+    s.save("msf-head.svg")
 
 
-def case(fonts, i, c):
-    W, H = 1000, 78
-    acc = N[c["color"]]
-    s = Svg(fonts, W, H, f'Case {i:02d}: {c["title"]} — {c["desc"]}. Status: {c["status"].lower()}.')
-    shape = chamfer(4, 4, W - 8, H - 8, br=16)
-    s.defs.append(f'<clipPath id="row"><path d="{shape}"/></clipPath>')
-    s.add(f'<path d="{shape}" fill="{N["panel"]}" stroke="{N["line"]}" stroke-width="1.2"/>')
-    s.add(f'<g clip-path="url(#row)"><rect x="4" y="4" width="3" height="{H - 8}" fill="{acc}"/></g>')
-    s.text(28, 50, f"{i:02d}", size=26, face="d", fill="#2c2e48", track=1)
-    s.text(84, 34, c["title"], size=19, face="d", fill=N["white"], track=2.5)
-    dw = s.text(84, 58, c["desc"], size=12.5, fill=N["mid"])
-    tw = s.measure(c["tech"], 11, "m", .5)
-    if 84 + dw > 916 - tw - 24:
-        raise SystemExit(f'{c["title"]}: description collides with the tech line')
-    s.text(916, 58, c["tech"], size=11, fill=N["dim"], anchor="end", track=.5)
-    sw = s.text(916, 34, c["status"], size=12, face="ds", fill=acc, anchor="end", track=3)
-    s.add(f'<circle{" class=" + chr(34) + "blink" + chr(34) if c["live"] else ""} cx="{916 - sw - 12:.1f}" cy="29.5" '
-          f'r="3.2" fill="{acc}"/>')
-    s.add(f'<path d="M934 18V60" stroke="{N["line"]}"/>')
-    if c["link"]:
-        s.text(962, 47, "↗", size=20, face="mb", fill=N["cyan"], anchor="middle")
+def module(font, i, file, path, status, desc, stack, public):
+    W, H = 960, 92
+    s = Svg(font, W, H, f"Module {i}: {path}. Status: {status.lower()}. {desc}. Stack: {stack}. "
+                        + ("Opens the repository." if public else "Private repository."))
+    head, _, leaf = path.rpartition("/")
+    c = [s.text(40, 41, str(i), 26, "hi")[0], s.runs(84, 40, [(head + "/", "mid"), (leaf, "hi")], 23)[0]]
+    tw = s.width(status, 18)
+    if status == "ACTIVE":
+        c.append(f'<g class="pulse"><rect x="640" y="22" width="{tw + 16:.1f}" height="24" rx="3" fill="{C["amb"]}"/>'
+                 + s.text(648, 40, status, 18, "screen")[0] + "</g>")
     else:
-        s.text(962, 46, "", size=15, fill=N["dim"], anchor="middle")
-    s.save(c["file"])
+        c.append(f'<rect x="640.6" y="22.6" width="{tw + 15:.1f}" height="23" rx="3" fill="none" stroke="{C["amb"]}" stroke-width="1.2"/>'
+                 + s.text(648, 40, status, 18, "amb")[0])
+    rx = W - 40
+    if public:
+        c.append(f'<path d="M{rx - 12} 40L{rx} 28M{rx - 8} 28H{rx}V36" fill="none" stroke="{C["hi"]}" '
+                 f'stroke-width="2" stroke-linecap="square"/>' + s.text(rx - 20, 40, "open", 19, "hi", "end")[0])
+    else:
+        lx = rx - 11
+        c.append(f'<g fill="none" stroke="{C["dim"]}" stroke-width="1.8"><rect x="{lx}" y="30" width="11" height="9" rx="1.5"/>'
+                 f'<path d="M{lx + 2.5} 30V27a3 3 0 0 1 6 0V30"/></g>' + s.text(rx - 19, 40, "private", 19, "dim", "end")[0])
+    c.append(s.text(84, 70, desc, 19, "mid")[0] + s.text(rx, 70, stack, 18, "dim", "end")[0])
+    panel(s, "".join(c))
+    s.save(file)
 
 
-# ── headers, loadout, buttons, footer ───────────────────────────────────────
-
-HEADERS = [
-    ("head-cases.svg", "02", "CASE FILES", f"{len(CASES):02d} RECORDS"),
-    ("head-activity.svg", "04", "ACTIVITY", "LIVE FEED"),
-]
-
-
-def header(fonts, name, num, title, note):
-    W, H = 1000, 48
-    s = Svg(fonts, W, H, title.title())
-    s.defs.append(f'<linearGradient id="rule" x1="0" x2="1"><stop offset="0" stop-color="{N["cyan"]}" stop-opacity=".7"/>'
-                  f'<stop offset="1" stop-color="{N["cyan"]}" stop-opacity="0"/></linearGradient>')
-    s.add(f'<path d="{chamfer(4, 6, W - 8, 36, tl=12)}" fill="{N["panel"]}" stroke="{N["line"]}" stroke-width="1.2"/>')
-    w = section_label(s, 28, 29, num, title)
-    nw = s.measure(note, 11, "m", 2.5)
-    s.add(f'<rect x="{28 + w + 10:.0f}" y="23" width="{W - 60 - w - nw - 34:.0f}" height="1.5" fill="url(#rule)"/>')
-    s.text(W - 28, 28.5, note, size=11, fill=N["dim"], anchor="end", track=2.5)
-    s.save(name)
+def msf_tail(font):
+    W, H = 960, 150
+    s = Svg(font, W, H, "Interact with a module by name or index; click one above to open its repository.")
+    x0 = 40
+    c = [s.runs(x0, 40, [("Interact with a module by name or index. For example ", "dim"), ("info 4", "mid"),
+                         (", ", "dim"), ("use 4", "mid")], 21)[0],
+         s.text(x0, 66, "(or just click one above: public modules open their repo)", 21, "dim")[0]]
+    g, ex = s.text(x0, 100, "msf6", 21, "hi")
+    g += f'<rect x="{x0}" y="104" width="{ex - x0:.1f}" height="1.6" fill="{C["hi"]}"/>'
+    g2, cx = s.text(ex, 100, " > ", 21, "hi")
+    c.append(g + g2 + cursor(cx, 100, 0))
+    panel(s, "".join(c), active=3)
+    s.save("msf-tail.svg")
 
 
-LOADOUT = [
-    ("BUILD", ["PYTHON", "PYTORCH", "SCIKIT-LEARN", "OPENCV", "FASTAPI", "SQL", "SOLIDITY"]),
-    ("BREAK", ["VAPT", "OWASP TOP 10", "OWASP LLM TOP 10", "ACCESS CONTROL", "HONEYPOTS"]),
-    ("RUN", ["LINUX", "GIT", "RASPBERRY PI", "C / C++", "BASH"]),
-]
+def log_head(font):
+    W, H = 960, 100
+    s = Svg(font, W, H, "$ watch -n 43200 snake ~/contributions: the contribution graph, redrawn twice a day.")
+    c, (g, cx, t) = [], prompt(s, 40, 44, "watch -n 43200 snake ~/contributions", t=.4, cps=22)
+    c.append(g)
+    c.append(line(s.text(40, 72, "Every 43200.0s: snake ~/contributions", 21, "dim")[0]
+                  + s.text(W - 40, 72, f"{HOST}: redrawn twice a day", 21, "dim", "end")[0], t + .3))
+    panel(s, "".join(c))
+    s.save("log-head.svg")
 
 
-def loadout(fonts):
-    W, H = 1000, 196
-    s = Svg(fonts, W, H, "Loadout. " + " ".join(f'{k.title()}: {", ".join(v)}.' for k, v in LOADOUT))
-    panel(s, 8, 8, W - 16, H - 16)
-    section_label(s, 36, 44, "03", "LOADOUT")
-    s.add(f'<path d="M36 60H{W - 40}" stroke="{N["line"]}"/>')
-    for r, (label, items) in enumerate(LOADOUT):
-        y = 100 + r * 34
-        s.text(36, y, label, size=11, fill=[N["cyan"], N["mag"], N["yel"]][r], track=3)
-        x = 130
-        for j, item in enumerate(items):
-            if j:
-                s.add(f'<path d="M{x + 11} {y - 9}l4 4-4 4-4-4z" fill="{N["mag"]}" opacity=".8"/>')
-                x += 22
-            x += s.text(x, y, item, size=15, face="dm", fill=N["text"], track=2)
-        if x > W - 40:
-            raise SystemExit(f"loadout row {label} runs to x={x:.0f}")
-    s.save("loadout.svg")
-
-
-BUTTONS = [
-    ("btn-linkedin.svg", "", "LINKEDIN", "cyan"),
-    ("btn-portfolio.svg", "\U000f0379", "PORTFOLIO", "mag"),
-    ("btn-email.svg", "\U000f01ee", "EMAIL", "amber"),
-]
-
-
-def button(fonts, name, icon, label, color):
-    acc = N[color]
-    s0 = Svg(fonts, 1, 1, "")
-    lw = s0.measure(label, 14, "ds", 3)
-    W, H = round(58 + lw + 24), 44
-    s = Svg(fonts, W, H, label.title())
-    s.add(f'<path d="{chamfer(1, 1, W - 2, H - 2, tl=11, br=11)}" fill="{N["panel"]}" stroke="{acc}" '
-          f'stroke-opacity=".8" stroke-width="1.4"/>')
-    s.add(f'<path d="M34 12V32" stroke="{acc}" stroke-opacity=".35"/>')
-    s.text(19, 28, icon, size=15, fill=acc, anchor="middle")
-    s.text(46, 27.5, label, size=14, face="ds", fill=N["white"], track=3)
-    s.save(name)
-
-
-def footer(fonts):
-    W, H = 1000, 130
-    rnd = random.Random(2049)
-    s = Svg(fonts, W, H, "End of transmission")
-    s.css.append(HERO_CSS)
-    shape = chamfer(4, 4, W - 8, H - 8, tl=16, br=16)
-    s.defs.append(f'<clipPath id="f"><path d="{shape}"/></clipPath>'
-                  '<linearGradient id="dusk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#07060e"/>'
-                  '<stop offset="1" stop-color="#2a0f30"/></linearGradient>')
-    s.add(f'<path d="{shape}" fill="url(#dusk)"/>')
-    s.add('<g clip-path="url(#f)">')
-    city = skyline(rnd, -10, W + 10, H, lambda x: (14, 44), 16, 44, gap=(0, 5))
-    draw_buildings(s, rnd, city, H, "#050409", antenna_light=True)
-    draw_lights(s, rnd, city, .07, [("#ffb867", .5), ("#6ff0ff", .45)], twinkle=.1)
-    rain(s, "rainA", rnd, 150, 6, 10, 22, "#c4f3ff", .22, 1, "rainA", W, H)
-    w = s.text(W / 2 - 8, 56, "// END OF TRANSMISSION", size=14, face="ds", fill=N["mid"], anchor="middle", track=7)
-    s.add(f'<rect class="blink" x="{W / 2 - 8 + w / 2 + 8:.1f}" y="43" width="9" height="15" fill="{N["cyan"]}"/>')
-    s.add("</g>")
-    s.add(f'<path d="{shape}" fill="none" stroke="{N["line"]}" stroke-width="1.2"/>')
+def footer(font):
+    W, H = 960, 168
+    s = Svg(font, W, H, "$ exit. [exited]. Connection to bladekiller246 closed. The CRT powers down to a single glowing line.")
+    c, (g, cx, t) = [], prompt(s, 40, 44, "exit", t=.4)
+    c.append(g)
+    c.append(line(s.text(40, 70, "[exited]", 21, "dim")[0], t + .3))
+    c.append(line(s.text(40, 96, f"Connection to {HOST} closed.", 21, "mid")[0], t + .45))
+    c.append(line(s.text(W - 40, 96, "thanks for scanning.", 21, "amb", "end")[0], t + .6))
+    cx, cy = W / 2, 132
+    c.append(f'<g class="pulse"><rect x="{cx - 220}" y="{cy - .8}" width="440" height="1.6" fill="{C["amb"]}" opacity=".45"/>'
+             f'<rect x="{cx - 70}" y="{cy - 1}" width="140" height="2" fill="{C["hi"]}" opacity=".8"/>'
+             f'<circle cx="{cx}" cy="{cy}" r="3" fill="{C["white"]}"/></g>')
+    panel(s, "".join(c))
     s.save("footer.svg")
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mono", required=True, type=Path, help="folder with JetBrainsMonoNLNerdFontMono-*.ttf")
-    args = ap.parse_args()
-    fonts = {
-        "m": Font.load(args.mono / "JetBrainsMonoNLNerdFontMono-Regular.ttf"),
-        "mb": Font.load(args.mono / "JetBrainsMonoNLNerdFontMono-Bold.ttf"),
-        "d": Font.load(fetch("ChakraPetch-Bold.ttf")),
-        "ds": Font.load(fetch("ChakraPetch-SemiBold.ttf")),
-        "dm": Font.load(fetch("ChakraPetch-Medium.ttf")),
-        "jp": Font.instance(fetch("NotoSansJP[wght].ttf"), JP_TEXT, wght=700),
-    }
-    print(f"rendering into {OUT}")
-    hero(fonts)
-    dossier(fonts)
-    for i, c in enumerate(CASES, 1):
-        case(fonts, i, c)
-    for h in HEADERS:
-        header(fonts, *h)
-    loadout(fonts)
-    for b in BUTTONS:
-        button(fonts, *b)
-    footer(fonts)
+    font = load_font()
+    OUT.mkdir(exist_ok=True)
+    for old in OUT.glob("*.svg"):
+        old.unlink()
+    hero(font)
+    for k in KEYS:
+        keycap(font, *k)
+    finger(font)
+    nmap(font)
+    msf_head(font)
+    for i, m in enumerate(MODULES):
+        module(font, i, *m)
+    msf_tail(font)
+    log_head(font)
+    footer(font)
 
 
 if __name__ == "__main__":
